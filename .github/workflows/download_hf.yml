@@ -11,7 +11,7 @@ on:
       exclude_patterns:
         description: '排除的文件模式 (逗号分隔，例如: *.h5,*.ot)'
         required: false
-        default: '*.h5,*.ot,*.msgpack'
+        default: '*.h5,*.ot,*.msgpack,colbert_linear.pt,sparse_linear.pt'
         type: string
       compression_level:
         description: '压缩级别 (0-9, 9最高压缩率但最慢)'
@@ -74,7 +74,7 @@ jobs:
                 resume_download=True,
                 ignore_patterns=exclude_patterns if exclude_patterns else None,
                 max_workers=4,
-                token=None  # 如果模型需要认证，可以设置token
+                token=None
             )
             
             end_time = time.time()
@@ -138,17 +138,20 @@ jobs:
         echo "压缩级别: $COMPRESSION_LEVEL"
         echo "输出文件: $ARCHIVE_NAME"
         
-        # 使用指定的压缩级别
-        time tar -cJf "$ARCHIVE_NAME" --xz-options="-$COMPRESSION_LEVEL" "$MODEL_DIR"
+        # 使用环境变量设置压缩级别
+        export XZ_OPT="-$COMPRESSION_LEVEL"
+        time tar -cJf "$ARCHIVE_NAME" "$MODEL_DIR"
         
         echo "压缩完成！"
         echo "压缩包大小: $(du -h "$ARCHIVE_NAME" | cut -f1)"
         
         # 计算压缩率
-        ORIGINAL_SIZE=$(du -sb "$MODEL_DIR" | cut -f1)
-        COMPRESSED_SIZE=$(du -sb "$ARCHIVE_NAME" | cut -f1)
-        RATIO=$(echo "scale=2; $COMPRESSED_SIZE * 100 / $ORIGINAL_SIZE" | bc)
-        echo "压缩率: ${RATIO}%"
+        if [ -d "$MODEL_DIR" ] && [ -f "$ARCHIVE_NAME" ]; then
+          ORIGINAL_SIZE=$(du -sb "$MODEL_DIR" | cut -f1)
+          COMPRESSED_SIZE=$(du -sb "$ARCHIVE_NAME" | cut -f1)
+          RATIO=$(echo "scale=2; $COMPRESSED_SIZE * 100 / $ORIGINAL_SIZE" | bc)
+          echo "压缩率: ${RATIO}%"
+        fi
     
     - name: Generate checksums
       id: checksum
@@ -165,22 +168,21 @@ jobs:
         echo "sha256=$SHA256" >> $GITHUB_OUTPUT
         echo "md5=$MD5" >> $GITHUB_OUTPUT
         
-        # 创建信息文件
-        cat > "model-info.txt" << EOF
-        ========================================
-        模型下载信息
-        ========================================
-        模型名称: ${{ github.event.inputs.model_name }}
-        下载时间: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-        压缩文件: $ARCHIVE_NAME
-        SHA256: $SHA256
-        MD5: $MD5
-        文件大小: $(du -h "$ARCHIVE_NAME" | cut -f1)
-        原始大小: ${{ steps.model_info.outputs.model_size }}
-        GitHub仓库: ${{ github.repository }}
-        运行ID: ${{ github.run_id }}
-        ========================================
-        EOF
+        # 创建信息文件（使用printf避免heredoc问题）
+        printf '%s\n' \
+          "========================================" \
+          "模型下载信息" \
+          "========================================" \
+          "模型名称: ${{ github.event.inputs.model_name }}" \
+          "下载时间: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" \
+          "压缩文件: $ARCHIVE_NAME" \
+          "SHA256: $SHA256" \
+          "MD5: $MD5" \
+          "文件大小: $(du -h "$ARCHIVE_NAME" | cut -f1)" \
+          "原始大小: ${{ steps.model_info.outputs.model_size }}" \
+          "GitHub仓库: ${{ github.repository }}" \
+          "运行ID: ${{ github.run_id }}" \
+          "========================================" > model-info.txt
         
         cat model-info.txt
     
@@ -194,7 +196,7 @@ jobs:
           ${{ steps.model_info.outputs.archive_name }}.md5
           model-info.txt
         retention-days: 7
-        compression-level: 0  # 文件已经压缩，不再额外压缩
+        compression-level: 0
     
     - name: Display download link
       run: |
