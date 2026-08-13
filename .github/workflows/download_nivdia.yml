@@ -1,4 +1,4 @@
-name: Download Offline Dependencies
+name: Download Nvidia Offline Dependencies
 
 on:
   workflow_dispatch:
